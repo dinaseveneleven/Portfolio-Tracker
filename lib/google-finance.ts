@@ -82,6 +82,7 @@ export async function fetchPrices(tickers: string[]): Promise<Map<string, PriceD
                 change: price * (Math.random() * 0.05 - 0.02), // +/- 2% change
                 changePercent: (Math.random() * 5 - 2.5), // +/- 2.5%
                 lastUpdated: new Date().toISOString(),
+                sparklineData: Array.from({ length: 20 }, () => price * (1 + (Math.random() * 0.1 - 0.05)))
             }
             prices.set(ticker, mockPrice)
         }
