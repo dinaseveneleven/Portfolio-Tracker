@@ -1,0 +1,25 @@
+node_modules/
+.next/
+out/
+dist/
+build/
+.DS_Store
+*.log
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.vercel
+*.pem
+
+# Project-specific temporary files
+api_output.txt
+rates_output.txt
+debug-error.log
+fix_log.txt
+test-api.mjs
+test-global.mjs
+test-yahoo-rates.mjs
+test-yahoo.js
+test-yahoo.mjs

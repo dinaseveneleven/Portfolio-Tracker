@@ -1,0 +1,18 @@
+[
+  {
+    "ticker": "BBCA.JK",
+    "quantity": 2000,
+    "purchasePrice": 0.4325925925925926,
+    "purchaseDate": "2026-02-18",
+    "name": "Bank Central Asia",
+    "id": "1771391982953"
+  },
+  {
+    "ticker": "BTC-USD",
+    "quantity": 0.0073711,
+    "purchasePrice": 67832.56,
+    "purchaseDate": "2026-02-18",
+    "name": "BTC-USD",
+    "id": "1771392427058"
+  }
+]
