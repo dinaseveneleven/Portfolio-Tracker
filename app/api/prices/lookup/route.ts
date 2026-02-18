@@ -62,7 +62,59 @@ export async function GET(req: NextRequest) {
             history // Return history if requested
         })
     } catch (error) {
-        console.error('Lookup error:', error)
-        return NextResponse.json({ error: 'Failed to fetch price' }, { status: 500 })
+        console.warn('Lookup failed, falling back to mock data:', error)
+
+        // Mock Fallback using prototype data
+        const mockPrice = getMockPrice(ticker)
+        let history: any[] = []
+
+        const range = searchParams.get('range')
+        if (range) {
+            const points = range === '1D' ? 24 : 30
+            const interval = range === '1D' ? 3600000 : 86400000
+            history = getMockHistory(ticker, points, interval)
+        }
+
+        return NextResponse.json({
+            ticker: ticker.toUpperCase(),
+            name: `${ticker.toUpperCase()}`,
+            currentPrice: mockPrice,
+            change: mockPrice * 0.02,
+            changePercent: 2.0,
+            currency: 'USD',
+            exchangeRate: 1,
+            lastUpdated: new Date().toISOString(),
+            history,
+            isMock: true
+        })
     }
+}
+
+// Simple internal implementation to avoid import issues if any
+const MOCK_PRICES: Record<string, number> = {
+    'AAPL': 185.92, 'GOOGL': 142.38, 'MSFT': 404.52, 'AMZN': 174.42,
+    'TSLA': 199.95, 'NVDA': 726.13, 'META': 468.12, 'NFLX': 559.60,
+    'BTC': 52145.20, 'ETH': 2890.15, 'BBRI.JK': 6200, 'BBCA.JK': 9800,
+    'BMRI.JK': 7200, 'TLKM.JK': 3900
+}
+
+function getMockPrice(ticker: string): number {
+    const upperTicker = ticker.toUpperCase()
+    let price = MOCK_PRICES[upperTicker]
+    if (!price) {
+        const seed = upperTicker.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0)
+        price = (seed % 500) + 50
+    }
+    return price
+}
+
+function getMockHistory(ticker: string, points: number, intervalMs: number): any[] {
+    const currentPrice = getMockPrice(ticker)
+    const now = Date.now()
+    return Array.from({ length: points }, (_, i) => {
+        const time = now - ((points - 1 - i) * intervalMs)
+        const trend = (i / points) * 0.05
+        const wave = Math.sin(i * 0.5) * 0.02
+        return { time, price: currentPrice * (0.95 + trend + wave) }
+    })
 }

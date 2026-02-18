@@ -1,4 +1,5 @@
 import type { PriceData } from '@/types/portfolio'
+import { getMockPrice, getMockSparkline } from '@/lib/mock-data'
 
 // Cache to store recent price fetches
 const priceCache = new Map<string, { data: PriceData; timestamp: number }>()
@@ -53,36 +54,19 @@ export async function fetchPrices(tickers: string[]): Promise<Map<string, PriceD
 
         // Return improved mock data for development
         // This is a temporary fallback until the scraping backend is fully reliable
-        const MOCK_PRICES: Record<string, number> = {
-            'AAPL': 185.92,
-            'GOOGL': 142.38,
-            'MSFT': 404.52,
-            'AMZN': 174.42,
-            'TSLA': 199.95,
-            'NVDA': 726.13,
-            'META': 468.12,
-            'NFLX': 559.60,
-            'BTC': 52145.20,
-            'ETH': 2890.15
-        }
+
 
         for (const ticker of tickersToFetch) {
-            // Use predefined mock price or generate a stable random price based on ticker char codes
-            let price = MOCK_PRICES[ticker.toUpperCase()]
-
-            if (!price) {
-                // Generate a deterministic "random" price based on ticker so it doesn't jump around on refresh
-                const seed = ticker.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0)
-                price = (seed % 500) + 50
-            }
+            // Use shared deterministic mock data
+            let price = getMockPrice(ticker)
 
             const mockPrice: PriceData = {
                 ticker,
                 currentPrice: price,
-                change: price * (Math.random() * 0.05 - 0.02), // +/- 2% change
-                changePercent: (Math.random() * 5 - 2.5), // +/- 2.5%
+                change: price * 0.02, // Consistent 2% change for prototype
+                changePercent: 2.0,
                 lastUpdated: new Date().toISOString(),
-                sparklineData: Array.from({ length: 20 }, () => price * (1 + (Math.random() * 0.1 - 0.05)))
+                sparklineData: getMockSparkline(ticker)
             }
             prices.set(ticker, mockPrice)
         }

@@ -48,17 +48,54 @@ export async function POST(req: NextRequest) {
                         sparklineData
                     }
                 } catch (e) {
-                    console.error(`Error fetching ${ticker}:`, e)
-                    return null
+                    console.warn(`Error fetching ${ticker}, using mock:`, e)
+                    const mockPrice = getMockPrice(ticker)
+
+                    // Deterministic sparkline
+                    const sparklineData = Array.from({ length: 20 }, (_, i) => {
+                        const trend = (i / 20) * 0.05
+                        const wave = Math.sin(i * 0.5) * 0.02
+                        return mockPrice * (0.95 + trend + wave)
+                    })
+
+                    return {
+                        ticker,
+                        currentPrice: mockPrice,
+                        change: mockPrice * 0.015,
+                        changePercent: 1.5,
+                        lastUpdated: new Date().toISOString(),
+                        currency: 'USD',
+                        exchangeRate: 1,
+                        sparklineData,
+                        isMock: true
+                    }
                 }
             })
         )
 
         return NextResponse.json({
-            prices: results.filter(r => r !== null)
+            prices: results
         })
     } catch (error) {
-        console.error('Bulk fetch error:', error)
-        return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+        console.error('Price fetch error:', error)
+        return NextResponse.json({ error: 'Failed to fetch prices' }, { status: 500 })
     }
+}
+
+// Simple internal implementation to avoid import issues
+const MOCK_PRICES: Record<string, number> = {
+    'AAPL': 185.92, 'GOOGL': 142.38, 'MSFT': 404.52, 'AMZN': 174.42,
+    'TSLA': 199.95, 'NVDA': 726.13, 'META': 468.12, 'NFLX': 559.60,
+    'BTC': 52145.20, 'ETH': 2890.15, 'BBRI.JK': 6200, 'BBCA.JK': 9800,
+    'BMRI.JK': 7200, 'TLKM.JK': 3900
+}
+
+function getMockPrice(ticker: string): number {
+    const upperTicker = ticker.toUpperCase()
+    let price = MOCK_PRICES[upperTicker]
+    if (!price) {
+        const seed = upperTicker.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0)
+        price = (seed % 500) + 50
+    }
+    return price
 }

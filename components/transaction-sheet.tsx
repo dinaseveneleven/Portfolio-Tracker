@@ -33,6 +33,7 @@ interface PriceLookupResult {
     history: any[]
     currency?: string
     exchangeRate?: number
+    isMock?: boolean
 }
 
 
@@ -286,8 +287,11 @@ export function TransactionSheet({ onAddAsset }: TransactionSheetProps) {
                                         <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
                                             Market Performance
                                         </span>
-                                        <Badge variant="outline" className="h-5 px-1.5 text-[9px] font-bold border-success/30 text-success bg-success/5 animate-pulse uppercase tracking-tighter">
-                                            Live Data Found
+                                        <Badge variant="outline" className={cn(
+                                            "h-5 px-1.5 text-[9px] font-bold border-success/30 text-success bg-success/5 uppercase tracking-tighter",
+                                            priceData.isMock && "border-yellow-500/30 text-yellow-500 bg-yellow-500/5"
+                                        )}>
+                                            {priceData.isMock ? "Simulated Data" : "Live Data Found"}
                                         </Badge>
                                     </div>
                                     <div className="flex items-center gap-2 mt-1">
