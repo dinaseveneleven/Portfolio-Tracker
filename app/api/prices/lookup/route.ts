@@ -3,6 +3,14 @@ import yahooFinance from 'yahoo-finance2'
 
 export const dynamic = 'force-dynamic'
 
+// Configure yahoo-finance2
+// @ts-ignore
+yahooFinance.suppressNotices(['yahooSurvey', 'nonsensical', 'validation'])
+// @ts-ignore
+yahooFinance.setGlobalConfig({
+    validation: { logErrors: false }
+})
+
 export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url)
     const ticker = searchParams.get('ticker')
