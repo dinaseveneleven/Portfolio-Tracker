@@ -12,8 +12,8 @@ import type { Holding, HoldingWithPrice, PortfolioMetrics } from '@/types/portfo
 import { cn } from '@/lib/utils'
 import { fetchPrices, clearPriceCache } from '@/lib/google-finance'
 import { enrichHoldingWithPrice, calculatePortfolioMetrics, calculateAllocations } from '@/lib/calculations'
-import { saveDailySnapshot } from '@/lib/daily-nav-tracker'
 import { Logo } from '@/components/logo'
+import { getHoldings, addHolding, updateHolding, deleteHolding, saveNavSnapshot } from '@/lib/data-store'
 
 export default function HomePage() {
     const [activeTab, setActiveTab] = useState<'assets' | 'insights'>('assets')
@@ -29,9 +29,8 @@ export default function HomePage() {
     const loadPortfolioData = useCallback(async () => {
         try {
             setRefreshing(true)
-            // Fetch holdings from API
-            const holdingsResponse = await fetch('/api/holdings')
-            const { holdings: rawHoldings } = await holdingsResponse.json()
+            // Fetch holdings directly from Supabase via data-store
+            const rawHoldings = await getHoldings()
 
             // Fetch prices for all tickers
             const tickers = rawHoldings.map((h: Holding) => h.ticker)
@@ -70,15 +69,13 @@ export default function HomePage() {
             setHoldings(withAllocations)
             setMetrics(portfolioMetrics)
 
-            // Save daily snapshot
             if (portfolioMetrics.totalValue > 0) {
-                saveDailySnapshot(portfolioMetrics.totalValue)
-                // Also save to server for risk metrics
-                fetch('/api/analytics/nav-snapshot', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ value: portfolioMetrics.totalValue })
-                }).catch(err => console.error('Failed to save server snapshot', err))
+                // Save locally
+                // saveDailySnapshot(portfolioMetrics.totalValue) 
+
+                // Save to Supabase directly
+                saveNavSnapshot(portfolioMetrics.totalValue)
+                    .catch(err => console.error('Failed to save server snapshot', err))
             }
 
         } catch (error) {
@@ -98,18 +95,9 @@ export default function HomePage() {
 
     const handleAddAsset = async (asset: Omit<Holding, 'id'>) => {
         try {
-            const response = await fetch('/api/holdings', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(asset)
-            })
-
-            if (response.ok) {
-                clearPriceCache() // Clear cache to force fresh fetch for new asset
-                loadPortfolioData()
-            } else {
-                console.error('Failed to add asset')
-            }
+            await addHolding(asset)
+            clearPriceCache() // Clear cache to force fresh fetch for new asset
+            loadPortfolioData()
         } catch (error) {
             console.error('Error adding asset:', error)
         }
@@ -123,8 +111,8 @@ export default function HomePage() {
     const handleDeleteAsset = async (id: string) => {
         if (!confirm('Are you sure you want to delete this asset?')) return
         try {
-            const response = await fetch(`/api/holdings?id=${id}`, { method: 'DELETE' })
-            if (response.ok) loadPortfolioData()
+            await deleteHolding(id)
+            loadPortfolioData()
         } catch (error) {
             console.error('Error deleting asset:', error)
         }
@@ -135,16 +123,11 @@ export default function HomePage() {
         setHoldings(prev => prev.map(h => h.id === id ? { ...h, ...updates } as HoldingWithPrice : h))
 
         try {
-            const response = await fetch('/api/holdings', {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ id, ...updates })
-            })
+            await updateHolding(id, updates)
 
             // Only trigger a full data reload if we actually changed something that requires new pricing
-            // Metadata like targetWeight doesn't need a full re-fetch of everything
             const isCriticalChange = updates.quantity !== undefined || updates.ticker !== undefined
-            if (response.ok && isCriticalChange) {
+            if (isCriticalChange) {
                 loadPortfolioData()
             }
         } catch (error) {

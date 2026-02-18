@@ -112,6 +112,7 @@ export function TransactionSheet({ onAddAsset }: TransactionSheetProps) {
     const lookupPrice = async (ticker: string) => {
         setLookupLoading(true)
         try {
+            // Attempt to fetch from API (will work in dev, may 404 in static export)
             const res = await fetch(`/api/prices/lookup?ticker=${ticker.toUpperCase()}`)
             if (res.ok) {
                 const data = await res.json()
@@ -123,10 +124,11 @@ export function TransactionSheet({ onAddAsset }: TransactionSheetProps) {
                     name: prev.name ? prev.name : data.name || data.ticker
                 }))
             } else {
+                console.warn(`Price lookup failed for ${ticker} (Status: ${res.status}). Static export fallback active.`)
                 setPriceData(null)
             }
         } catch (error) {
-            console.error(error)
+            console.error('Price lookup error:', error)
             setPriceData(null)
         } finally {
             setLookupLoading(false)

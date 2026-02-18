@@ -38,10 +38,11 @@ export function CurrencyProvider({ children }: { children: React.ReactNode }) {
                 const res = await fetch('/api/prices/lookup?ticker=USDIDR=X')
                 if (res.ok) {
                     const data = await res.json()
-                    // If USDIDR=X returns ~15800, that's our multiplier for IDR mode
                     if (data.currentPrice) {
                         setExchangeRate(data.currentPrice)
                     }
+                } else {
+                    console.warn('Exchange rate API unavailable, using fallback:', exchangeRate)
                 }
             } catch (error) {
                 console.error('Failed to fetch exchange rate', error)

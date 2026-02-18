@@ -23,3 +23,6 @@ test-global.mjs
 test-yahoo-rates.mjs
 test-yahoo.js
 test-yahoo.mjs
+
+# Local Netlify folder
+.netlify

@@ -1,9 +1,5 @@
-import fs from 'fs/promises'
-import path from 'path'
+import { supabase } from './supabase'
 import type { Holding } from '@/types/portfolio'
-
-const NAV_FILE = path.join(process.cwd(), 'data', 'nav_history.json')
-const DATA_FILE = path.join(process.cwd(), 'data', 'holdings.json')
 
 export interface NavSnapshot {
     date: string
@@ -12,34 +8,52 @@ export interface NavSnapshot {
 
 export async function getNavHistory(): Promise<NavSnapshot[]> {
     try {
-        const data = await fs.readFile(NAV_FILE, 'utf-8')
-        return JSON.parse(data)
+        const { data, error } = await supabase
+            .from('nav_history')
+            .select('date, value')
+            .order('date', { ascending: true })
+
+        if (error) throw error
+        return data || []
     } catch (error) {
+        console.error('Error fetching NAV history:', error)
         return []
     }
 }
 
 export async function saveNavSnapshot(value: number): Promise<void> {
-    const history = await getNavHistory()
     const today = new Date().toISOString().split('T')[0]
 
-    const lastSnapshot = history[history.length - 1]
-    if (lastSnapshot && lastSnapshot.date === today) {
-        lastSnapshot.value = value
-    } else {
-        history.push({ date: today, value })
+    try {
+        const { error } = await supabase
+            .from('nav_history')
+            .upsert({ date: today, value }, { onConflict: 'date' })
+
+        if (error) throw error
+    } catch (error) {
+        console.error('Error saving NAV snapshot:', error)
     }
-
-    // Keep 1 year of history
-    if (history.length > 365) history.shift()
-
-    await fs.writeFile(NAV_FILE, JSON.stringify(history, null, 2))
 }
 
 export async function getHoldings(): Promise<Holding[]> {
     try {
-        const data = await fs.readFile(DATA_FILE, 'utf-8')
-        return JSON.parse(data)
+        const { data, error } = await supabase
+            .from('holdings')
+            .select('*')
+            .order('created_at', { ascending: false })
+
+        if (error) throw error
+
+        // Map snake_case to camelCase to match types
+        return (data || []).map(h => ({
+            id: h.id,
+            ticker: h.ticker,
+            name: h.name,
+            quantity: h.quantity,
+            purchasePrice: h.purchase_price,
+            purchaseDate: h.purchase_date,
+            targetWeight: h.target_weight
+        }))
     } catch (error) {
         console.error('Error reading holdings:', error)
         return []
@@ -47,33 +61,83 @@ export async function getHoldings(): Promise<Holding[]> {
 }
 
 export async function addHolding(holding: Omit<Holding, 'id'>): Promise<Holding> {
-    const holdings = await getHoldings()
-    const newHolding: Holding = {
-        ...holding,
-        id: Date.now().toString(),
+    try {
+        const { data, error } = await supabase
+            .from('holdings')
+            .insert([{
+                ticker: holding.ticker,
+                name: holding.name,
+                quantity: holding.quantity,
+                purchase_price: holding.purchasePrice,
+                purchase_date: holding.purchaseDate,
+                target_weight: holding.targetWeight
+            }])
+            .select()
+            .single()
+
+        if (error) throw error
+
+        return {
+            id: data.id,
+            ticker: data.ticker,
+            name: data.name,
+            quantity: data.quantity,
+            purchasePrice: data.purchase_price,
+            purchaseDate: data.purchase_date,
+            targetWeight: data.target_weight
+        }
+    } catch (error) {
+        console.error('Error adding holding:', error)
+        throw error
     }
-    holdings.push(newHolding)
-    await fs.writeFile(DATA_FILE, JSON.stringify(holdings, null, 2))
-    return newHolding
 }
 
 export async function updateHolding(id: string, updates: Partial<Holding>): Promise<Holding | null> {
-    const holdings = await getHoldings()
-    const index = holdings.findIndex(h => h.id === id)
+    try {
+        // Map camelCase to snake_case
+        const dbUpdates: any = {}
+        if (updates.ticker !== undefined) dbUpdates.ticker = updates.ticker
+        if (updates.name !== undefined) dbUpdates.name = updates.name
+        if (updates.quantity !== undefined) dbUpdates.quantity = updates.quantity
+        if (updates.purchasePrice !== undefined) dbUpdates.purchase_price = updates.purchasePrice
+        if (updates.purchaseDate !== undefined) dbUpdates.purchase_date = updates.purchaseDate
+        if (updates.targetWeight !== undefined) dbUpdates.target_weight = updates.targetWeight
 
-    if (index === -1) return null
+        const { data, error } = await supabase
+            .from('holdings')
+            .update(dbUpdates)
+            .eq('id', id)
+            .select()
+            .single()
 
-    holdings[index] = { ...holdings[index], ...updates }
-    await fs.writeFile(DATA_FILE, JSON.stringify(holdings, null, 2))
-    return holdings[index]
+        if (error) throw error
+
+        return {
+            id: data.id,
+            ticker: data.ticker,
+            name: data.name,
+            quantity: data.quantity,
+            purchasePrice: data.purchase_price,
+            purchaseDate: data.purchase_date,
+            targetWeight: data.target_weight
+        }
+    } catch (error) {
+        console.error('Error updating holding:', error)
+        return null
+    }
 }
 
 export async function deleteHolding(id: string): Promise<boolean> {
-    const holdings = await getHoldings()
-    const filtered = holdings.filter(h => h.id !== id)
+    try {
+        const { error } = await supabase
+            .from('holdings')
+            .delete()
+            .eq('id', id)
 
-    if (filtered.length === holdings.length) return false
-
-    await fs.writeFile(DATA_FILE, JSON.stringify(filtered, null, 2))
-    return true
+        if (error) throw error
+        return true
+    } catch (error) {
+        console.error('Error deleting holding:', error)
+        return false
+    }
 }
