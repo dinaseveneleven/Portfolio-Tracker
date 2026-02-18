@@ -20,6 +20,7 @@ import { Holding } from "@/types/portfolio"
 import { cn } from "@/lib/utils"
 import { useCurrency } from "@/context/currency-context"
 import { PriceChart } from "./price-chart"
+import { getMockPrice, getMockHistory } from "@/lib/mock-data"
 
 interface TransactionSheetProps {
     onAddAsset: (asset: Omit<Holding, "id">) => void
@@ -34,6 +35,7 @@ interface PriceLookupResult {
     currency?: string
     exchangeRate?: number
     isMock?: boolean
+    name?: string
 }
 
 
@@ -113,8 +115,19 @@ export function TransactionSheet({ onAddAsset }: TransactionSheetProps) {
     const lookupPrice = async (ticker: string) => {
         setLookupLoading(true)
         try {
-            // Attempt to fetch from API (will work in dev, may 404 in static export)
-            const res = await fetch(`/api/prices/lookup?ticker=${ticker.toUpperCase()}`)
+            // Attempt to fetch from API with a timeout
+            const controller = new AbortController()
+            const timeoutId = setTimeout(() => controller.abort(), 12000) // 12s timeout
+
+            const res = await fetch(`/api/prices/lookup?ticker=${ticker.toUpperCase()}`, {
+                signal: controller.signal
+            }).catch(err => {
+                if (err.name === 'AbortError') throw new Error('Timeout')
+                throw err
+            })
+
+            clearTimeout(timeoutId)
+
             if (res.ok) {
                 const data = await res.json()
                 setPriceData(data)
@@ -125,15 +138,38 @@ export function TransactionSheet({ onAddAsset }: TransactionSheetProps) {
                     name: prev.name ? prev.name : data.name || data.ticker
                 }))
             } else {
-                console.warn(`Price lookup failed for ${ticker} (Status: ${res.status}). Static export fallback active.`)
-                setPriceData(null)
+                console.warn(`Price lookup failed for ${ticker} (Status: ${res.status}). Using client-side fallback.`)
+                useClientSideFallback(ticker)
             }
         } catch (error) {
             console.error('Price lookup error:', error)
-            setPriceData(null)
+            useClientSideFallback(ticker)
         } finally {
             setLookupLoading(false)
         }
+    }
+
+    const useClientSideFallback = (ticker: string) => {
+        const mockPrice = getMockPrice(ticker)
+        const mockHistory = getMockHistory(ticker, 24, 3600000) // 1D history
+
+        setPriceData({
+            ticker: ticker.toUpperCase(),
+            currentPrice: mockPrice,
+            change: mockPrice * 0.02,
+            changePercent: 2.0,
+            currency: 'USD', // Default to USD for mock
+            exchangeRate: 1,
+            history: mockHistory,
+            name: ticker.toUpperCase(),
+            isMock: true
+        })
+
+        setFormData(prev => ({
+            ...prev,
+            purchasePrice: prev.purchasePrice ? prev.purchasePrice : mockPrice.toFixed(2),
+            name: prev.name ? prev.name : ticker.toUpperCase()
+        }))
     }
 
     // Effect to clear data when sheet closes

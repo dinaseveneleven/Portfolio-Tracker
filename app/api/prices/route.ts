@@ -5,12 +5,12 @@ export const dynamic = 'force-dynamic'
 
 // Configure yahoo-finance2 to be less strict and noisy
 // @ts-ignore
-yahooFinance.suppressNotices(['yahooSurvey', 'nonsensical', 'validation'])
+// yahooFinance.suppressNotices(['yahooSurvey', 'nonsensical', 'validation'])
 // @ts-ignore
-yahooFinance.setGlobalConfig({
-    validation: { logErrors: false },
-    queue: { concurrency: 2 } // Limit concurrency to avoid rate limits
-})
+// yahooFinance.setGlobalConfig({
+//    validation: { logErrors: false },
+//    queue: { concurrency: 2 } // Limit concurrency to avoid rate limits
+// })
 
 export async function POST(req: NextRequest) {
     try {

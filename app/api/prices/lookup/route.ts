@@ -5,11 +5,11 @@ export const dynamic = 'force-dynamic'
 
 // Configure yahoo-finance2
 // @ts-ignore
-yahooFinance.suppressNotices(['yahooSurvey', 'nonsensical', 'validation'])
+// yahooFinance.suppressNotices(['yahooSurvey', 'nonsensical', 'validation'])
 // @ts-ignore
-yahooFinance.setGlobalConfig({
-    validation: { logErrors: false }
-})
+// yahooFinance.setGlobalConfig({
+//    validation: { logErrors: false }
+// })
 
 export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url)
@@ -20,7 +20,13 @@ export async function GET(req: NextRequest) {
     }
 
     try {
-        const quote: any = await yahooFinance.quote(ticker)
+        // Enforce a strict timeout (10s) for Yahoo Finance to allow fallback to run if it hangs
+        const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Yahoo Timeout')), 10000))
+        const quotePromise = yahooFinance.quote(ticker)
+
+        const quote: any = await Promise.race([quotePromise, timeoutPromise])
+        console.log(`[API] Successfully fetched quote for ${ticker}:`, quote.regularMarketPrice)
+
         let history: any[] = []
 
         // If range is provided, fetch historical data
@@ -69,8 +75,14 @@ export async function GET(req: NextRequest) {
             lastUpdated: new Date().toISOString(),
             history // Return history if requested
         })
-    } catch (error) {
-        console.warn('Lookup failed, falling back to mock data:', error)
+    } catch (error: any) {
+        console.error('---------------------------------------------------')
+        console.error(`[API] Lookup failed for ${ticker}. Falling back to mock data.`)
+        console.error('Error Name:', error?.name)
+        console.error('Error Message:', error?.message)
+        if (error?.errors) console.error('Validation Errors:', JSON.stringify(error.errors, null, 2))
+        if (error?.result) console.error('Partial Result:', error.result)
+        console.error('---------------------------------------------------')
 
         // Mock Fallback using prototype data
         const mockPrice = getMockPrice(ticker)
