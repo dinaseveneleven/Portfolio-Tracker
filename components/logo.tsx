@@ -1,9 +1,11 @@
-import React from 'react';
-import { cn } from '@/lib/utils';
+"use client"
+
+import React from 'react'
+import { cn } from '@/lib/utils'
 
 interface LogoProps {
-    className?: string;
-    showText?: boolean;
+    className?: string
+    showText?: boolean
 }
 
 export const Logo: React.FC<LogoProps> = ({ className, showText = true }) => {

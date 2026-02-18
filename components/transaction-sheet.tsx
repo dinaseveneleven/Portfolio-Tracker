@@ -20,7 +20,6 @@ import { Holding } from "@/types/portfolio"
 import { cn } from "@/lib/utils"
 import { useCurrency } from "@/context/currency-context"
 import { PriceChart } from "./price-chart"
-import { getMockPrice, getMockHistory } from "@/lib/mock-data"
 
 interface TransactionSheetProps {
     onAddAsset: (asset: Omit<Holding, "id">) => void
@@ -34,8 +33,6 @@ interface PriceLookupResult {
     history: any[]
     currency?: string
     exchangeRate?: number
-    isMock?: boolean
-    name?: string
 }
 
 
@@ -115,19 +112,7 @@ export function TransactionSheet({ onAddAsset }: TransactionSheetProps) {
     const lookupPrice = async (ticker: string) => {
         setLookupLoading(true)
         try {
-            // Attempt to fetch from API with a timeout
-            const controller = new AbortController()
-            const timeoutId = setTimeout(() => controller.abort(), 12000) // 12s timeout
-
-            const res = await fetch(`/api/prices/lookup?ticker=${ticker.toUpperCase()}`, {
-                signal: controller.signal
-            }).catch(err => {
-                if (err.name === 'AbortError') throw new Error('Timeout')
-                throw err
-            })
-
-            clearTimeout(timeoutId)
-
+            const res = await fetch(`/api/prices/lookup?ticker=${ticker.toUpperCase()}`)
             if (res.ok) {
                 const data = await res.json()
                 setPriceData(data)
@@ -138,38 +123,14 @@ export function TransactionSheet({ onAddAsset }: TransactionSheetProps) {
                     name: prev.name ? prev.name : data.name || data.ticker
                 }))
             } else {
-                console.warn(`Price lookup failed for ${ticker} (Status: ${res.status}). Using client-side fallback.`)
-                useClientSideFallback(ticker)
+                setPriceData(null)
             }
         } catch (error) {
-            console.error('Price lookup error:', error)
-            useClientSideFallback(ticker)
+            console.error(error)
+            setPriceData(null)
         } finally {
             setLookupLoading(false)
         }
-    }
-
-    const useClientSideFallback = (ticker: string) => {
-        const mockPrice = getMockPrice(ticker)
-        const mockHistory = getMockHistory(ticker, 24, 3600000) // 1D history
-
-        setPriceData({
-            ticker: ticker.toUpperCase(),
-            currentPrice: mockPrice,
-            change: mockPrice * 0.02,
-            changePercent: 2.0,
-            currency: 'USD', // Default to USD for mock
-            exchangeRate: 1,
-            history: mockHistory,
-            name: ticker.toUpperCase(),
-            isMock: true
-        })
-
-        setFormData(prev => ({
-            ...prev,
-            purchasePrice: prev.purchasePrice ? prev.purchasePrice : mockPrice.toFixed(2),
-            name: prev.name ? prev.name : ticker.toUpperCase()
-        }))
     }
 
     // Effect to clear data when sheet closes
@@ -273,33 +234,6 @@ export function TransactionSheet({ onAddAsset }: TransactionSheetProps) {
                             </div>
                         </div>
 
-                        {/* Total Investment Preview */}
-                        {formData.quantity && formData.purchasePrice && (
-                            <div className="p-4 rounded-xl bg-primary/5 border border-primary/10 animate-in zoom-in-95 duration-300">
-                                <div className="flex justify-between items-center text-xs text-muted-foreground uppercase tracking-wider mb-1">
-                                    <span>Total Investment</span>
-                                    <span>Qty × Price</span>
-                                </div>
-                                <div className="flex justify-between items-end">
-                                    <div className="text-2xl font-bold tracking-tighter">
-                                        {priceData?.currency && priceData.currency !== 'USD' ? priceData.currency : '$'}
-                                        {(Number(formData.quantity) * Number(formData.purchasePrice)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                    </div>
-                                    {/* Conversion to App Currency if different */}
-                                    {priceData?.currency && priceData.currency !== appCurrency && (
-                                        <div className="text-sm font-medium text-primary/80 mb-0.5">
-                                            ≈ {formatValue(
-                                                Number(formData.quantity) *
-                                                Number(formData.purchasePrice) *
-                                                (priceData.exchangeRate || 1) /
-                                                (appCurrency === 'USD' ? 1 : appExchangeRate)
-                                            )}
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-                        )}
-
                         <div className="space-y-2">
                             <Label htmlFor="purchaseDate" className="text-xs uppercase tracking-wider text-muted-foreground">Date</Label>
                             <Input
@@ -323,11 +257,8 @@ export function TransactionSheet({ onAddAsset }: TransactionSheetProps) {
                                         <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
                                             Market Performance
                                         </span>
-                                        <Badge variant="outline" className={cn(
-                                            "h-5 px-1.5 text-[9px] font-bold border-success/30 text-success bg-success/5 uppercase tracking-tighter",
-                                            priceData.isMock && "border-yellow-500/30 text-yellow-500 bg-yellow-500/5"
-                                        )}>
-                                            {priceData.isMock ? "Simulated Data" : "Live Data Found"}
+                                        <Badge variant="outline" className="h-5 px-1.5 text-[9px] font-bold border-success/30 text-success bg-success/5 animate-pulse uppercase tracking-tighter">
+                                            Live Data Found
                                         </Badge>
                                     </div>
                                     <div className="flex items-center gap-2 mt-1">

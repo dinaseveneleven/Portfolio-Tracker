@@ -1,15 +1,64 @@
 import { NextRequest, NextResponse } from 'next/server'
-import yahooFinance from 'yahoo-finance2'
+import { getMockPrice, getMockHistory } from '@/lib/mock-data'
 
 export const dynamic = 'force-dynamic'
 
-// Configure yahoo-finance2
-// @ts-ignore
-// yahooFinance.suppressNotices(['yahooSurvey', 'nonsensical', 'validation'])
-// @ts-ignore
-// yahooFinance.setGlobalConfig({
-//    validation: { logErrors: false }
-// })
+const API_KEY = process.env.TWELVE_DATA_API_KEY || ''
+const BASE_URL = 'https://api.twelvedata.com'
+
+// Server-side cache
+const lookupCache = new Map<string, { data: any; timestamp: number }>()
+const CACHE_TTL = 5 * 60 * 1000 // 5 minutes
+
+/**
+ * Normalize user-facing ticker to Twelve Data format
+ */
+function normalizeSymbol(ticker: string): string {
+    if (ticker.toUpperCase().endsWith('.JK')) {
+        return ticker.slice(0, -3)
+    }
+    if (ticker.includes('-')) {
+        return ticker.replace('-', '/')
+    }
+    return ticker
+}
+
+/**
+ * Detect if ticker is an exchange rate request (e.g. USDIDR=X)
+ */
+function isExchangeRate(ticker: string): boolean {
+    return ticker.toUpperCase().endsWith('=X')
+}
+
+/**
+ * Parse exchange rate ticker: USDIDR=X -> { from: 'USD', to: 'IDR' }
+ */
+function parseExchangeRateTicker(ticker: string): { from: string; to: string } {
+    const cleaned = ticker.replace('=X', '')
+    // Assume first 3 chars are the "from" currency, rest is "to"
+    return {
+        from: cleaned.substring(0, 3).toUpperCase(),
+        to: cleaned.substring(3).toUpperCase()
+    }
+}
+
+/**
+ * Map range parameter to Twelve Data time_series interval+outputsize
+ */
+function getTimeSeriesParams(range: string): { interval: string; outputsize: number } {
+    switch (range) {
+        case '1D': return { interval: '15min', outputsize: 30 }
+        case '1W': return { interval: '1h', outputsize: 40 }
+        case '1M': return { interval: '1day', outputsize: 30 }
+        case 'YTD': {
+            const dayOfYear = Math.floor((Date.now() - new Date(new Date().getFullYear(), 0, 1).getTime()) / 86400000)
+            return { interval: '1day', outputsize: Math.min(dayOfYear, 365) }
+        }
+        case '1Y': return { interval: '1day', outputsize: 252 }
+        case '5Y': return { interval: '1week', outputsize: 260 }
+        default: return { interval: '1day', outputsize: 30 }
+    }
+}
 
 export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url)
@@ -19,122 +68,179 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({ error: 'Ticker is required' }, { status: 400 })
     }
 
+    // --- Handle Exchange Rate tickers (e.g. USDIDR=X) ---
+    if (isExchangeRate(ticker)) {
+        return handleExchangeRate(ticker)
+    }
+
+    // --- Normal stock/crypto lookup ---
+    const now = Date.now()
+    const cacheKey = `${ticker}:${searchParams.get('range') || 'none'}`
+    const cached = lookupCache.get(cacheKey)
+
+    if (cached && now - cached.timestamp < CACHE_TTL) {
+        return NextResponse.json(cached.data)
+    }
+
+    if (!API_KEY) {
+        console.warn('[API/lookup] No TWELVE_DATA_API_KEY — returning mock')
+        return returnMockLookup(ticker, searchParams.get('range'))
+    }
+
     try {
-        // Enforce a strict timeout (10s) for Yahoo Finance to allow fallback to run if it hangs
-        const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Yahoo Timeout')), 10000))
-        const quotePromise = yahooFinance.quote(ticker)
+        const symbol = normalizeSymbol(ticker)
+        console.log(`[API/lookup] Fetching quote for: ${symbol} (original: ${ticker})`)
 
-        const quote: any = await Promise.race([quotePromise, timeoutPromise])
-        console.log(`[API] Successfully fetched quote for ${ticker}:`, quote.regularMarketPrice)
+        // Fetch quote
+        const controller = new AbortController()
+        const timeout = setTimeout(() => controller.abort(), 12000)
 
-        let history: any[] = []
+        const quoteUrl = `${BASE_URL}/quote?symbol=${encodeURIComponent(symbol)}&apikey=${API_KEY}`
+        const quoteRes = await fetch(quoteUrl, { signal: controller.signal })
+        clearTimeout(timeout)
+        const quote = await quoteRes.json()
 
-        // If range is provided, fetch historical data
+        if (quote.code || quote.status === 'error') {
+            console.error(`[API/lookup] Quote error for ${symbol}:`, quote.message)
+            return returnMockLookup(ticker, searchParams.get('range'))
+        }
+
+        console.log(`[API/lookup] Got price for ${symbol}: ${quote.close}`)
+
+        // Fetch history if range is provided
+        let history: { time: number; price: number }[] = []
         const range = searchParams.get('range')
+
         if (range) {
-            const end = new Date()
-            const start = new Date()
-
-            switch (range) {
-                case '1D': start.setDate(end.getDate() - 1); break;
-                case '1W': start.setDate(end.getDate() - 7); break;
-                case '1M': start.setMonth(end.getMonth() - 1); break;
-                case 'YTD': start.setFullYear(end.getFullYear(), 0, 1); break;
-                case '1Y': start.setFullYear(end.getFullYear() - 1); break;
-                case '5Y': start.setFullYear(end.getFullYear() - 5); break;
-                default: start.setDate(end.getDate() - 1); // Default to 1D
-            }
-
             try {
-                const chartData: any = await yahooFinance.chart(ticker, {
-                    period1: start,
-                    period2: end,
-                    interval: range === '1D' || range === '1W' ? '15m' : '1d'
-                })
-                if (chartData && chartData.quotes) {
-                    history = chartData.quotes
-                        .filter((q: any) => q.close !== null)
-                        .map((q: any) => ({
-                            time: q.date.getTime(),
-                            price: q.close
+                const { interval, outputsize } = getTimeSeriesParams(range)
+                const tsUrl = `${BASE_URL}/time_series?symbol=${encodeURIComponent(symbol)}&interval=${interval}&outputsize=${outputsize}&apikey=${API_KEY}`
+
+                const tsController = new AbortController()
+                const tsTimeout = setTimeout(() => tsController.abort(), 12000)
+                const tsRes = await fetch(tsUrl, { signal: tsController.signal })
+                clearTimeout(tsTimeout)
+                const tsData = await tsRes.json()
+
+                if (tsData.values && Array.isArray(tsData.values)) {
+                    // Twelve Data returns newest-first; reverse for chronological order
+                    history = tsData.values
+                        .reverse()
+                        .map((v: any) => ({
+                            time: new Date(v.datetime).getTime(),
+                            price: parseFloat(v.close)
                         }))
+                        .filter((h: any) => !isNaN(h.price) && h.time > 0)
                 }
-            } catch (hErr) {
-                console.warn(`Failed to fetch history for ${ticker} (${range})`, hErr)
+            } catch (hErr: any) {
+                console.warn(`[API/lookup] History fetch failed for ${symbol}:`, hErr.message)
             }
         }
 
-        return NextResponse.json({
-            ticker: quote.symbol,
-            name: quote.shortName || quote.longName || quote.symbol,
-            currentPrice: quote.regularMarketPrice,
-            change: quote.regularMarketChange,
-            changePercent: quote.regularMarketChangePercent,
-            currency: quote.currency,
-            exchangeRate: quote.currency === 'IDR' ? 1 / 15800 : (quote.currency === 'USD' ? 1 : 1), // Simplified - for IDR mode
-            lastUpdated: new Date().toISOString(),
-            history // Return history if requested
-        })
-    } catch (error: any) {
-        console.error('---------------------------------------------------')
-        console.error(`[API] Lookup failed for ${ticker}. Falling back to mock data.`)
-        console.error('Error Name:', error?.name)
-        console.error('Error Message:', error?.message)
-        if (error?.errors) console.error('Validation Errors:', JSON.stringify(error.errors, null, 2))
-        if (error?.result) console.error('Partial Result:', error.result)
-        console.error('---------------------------------------------------')
-
-        // Mock Fallback using prototype data
-        const mockPrice = getMockPrice(ticker)
-        let history: any[] = []
-
-        const range = searchParams.get('range')
-        if (range) {
-            const points = range === '1D' ? 24 : 30
-            const interval = range === '1D' ? 3600000 : 86400000
-            history = getMockHistory(ticker, points, interval)
-        }
-
-        return NextResponse.json({
+        const result = {
             ticker: ticker.toUpperCase(),
-            name: `${ticker.toUpperCase()}`,
-            currentPrice: mockPrice,
-            change: mockPrice * 0.02,
-            changePercent: 2.0,
-            currency: 'USD',
+            name: quote.name || ticker.toUpperCase(),
+            currentPrice: parseFloat(quote.close),
+            change: parseFloat(quote.change || '0'),
+            changePercent: parseFloat(quote.percent_change || '0'),
+            currency: quote.currency || 'USD',
             exchangeRate: 1,
             lastUpdated: new Date().toISOString(),
-            history,
+            history
+        }
+
+        lookupCache.set(cacheKey, { data: result, timestamp: now })
+        return NextResponse.json(result)
+
+    } catch (error: any) {
+        console.error(`[API/lookup] Failed for ${ticker}:`, error.message)
+        return returnMockLookup(ticker, searchParams.get('range'))
+    }
+}
+
+/**
+ * Handle exchange rate lookups (e.g. USDIDR=X)
+ */
+async function handleExchangeRate(ticker: string) {
+    const { from, to } = parseExchangeRateTicker(ticker)
+
+    if (!API_KEY) {
+        // Return hardcoded fallback for common rates
+        const fallbackRates: Record<string, number> = { 'USDIDR': 15800, 'USDEUR': 0.92, 'USDGBP': 0.79, 'USDJPY': 149.5 }
+        const key = `${from}${to}`
+        return NextResponse.json({
+            ticker: ticker.toUpperCase(),
+            name: `${from}/${to} Exchange Rate`,
+            currentPrice: fallbackRates[key] || 1,
+            change: 0,
+            changePercent: 0,
+            currency: to,
+            lastUpdated: new Date().toISOString(),
+            isMock: true
+        })
+    }
+
+    try {
+        const url = `${BASE_URL}/exchange_rate?symbol=${from}/${to}&apikey=${API_KEY}`
+
+        const controller = new AbortController()
+        const timeout = setTimeout(() => controller.abort(), 10000)
+        const res = await fetch(url, { signal: controller.signal })
+        clearTimeout(timeout)
+        const data = await res.json()
+
+        if (data.rate) {
+            return NextResponse.json({
+                ticker: ticker.toUpperCase(),
+                name: `${from}/${to} Exchange Rate`,
+                currentPrice: parseFloat(data.rate),
+                change: 0,
+                changePercent: 0,
+                currency: to,
+                lastUpdated: new Date().toISOString()
+            })
+        }
+
+        throw new Error(data.message || 'Exchange rate not available')
+    } catch (error: any) {
+        console.error(`[API/lookup] Exchange rate failed for ${ticker}:`, error.message)
+        const fallbackRates: Record<string, number> = { 'USDIDR': 15800 }
+        const key = `${parseExchangeRateTicker(ticker).from}${parseExchangeRateTicker(ticker).to}`
+        return NextResponse.json({
+            ticker: ticker.toUpperCase(),
+            name: `Exchange Rate`,
+            currentPrice: fallbackRates[key] || 1,
+            change: 0,
+            changePercent: 0,
+            currency: parseExchangeRateTicker(ticker).to,
+            lastUpdated: new Date().toISOString(),
             isMock: true
         })
     }
 }
 
-// Simple internal implementation to avoid import issues if any
-const MOCK_PRICES: Record<string, number> = {
-    'AAPL': 185.92, 'GOOGL': 142.38, 'MSFT': 404.52, 'AMZN': 174.42,
-    'TSLA': 199.95, 'NVDA': 726.13, 'META': 468.12, 'NFLX': 559.60,
-    'BTC': 52145.20, 'ETH': 2890.15, 'BBRI.JK': 6200, 'BBCA.JK': 9800,
-    'BMRI.JK': 7200, 'TLKM.JK': 3900
-}
-
-function getMockPrice(ticker: string): number {
-    const upperTicker = ticker.toUpperCase()
-    let price = MOCK_PRICES[upperTicker]
-    if (!price) {
-        const seed = upperTicker.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0)
-        price = (seed % 500) + 50
+/**
+ * Return mock data when API is unavailable
+ */
+function returnMockLookup(ticker: string, range: string | null) {
+    const mockPrice = getMockPrice(ticker)
+    let history: any[] = []
+    if (range) {
+        const points = range === '1D' ? 24 : 30
+        const interval = range === '1D' ? 3600000 : 86400000
+        history = getMockHistory(ticker, points, interval)
     }
-    return price
-}
 
-function getMockHistory(ticker: string, points: number, intervalMs: number): any[] {
-    const currentPrice = getMockPrice(ticker)
-    const now = Date.now()
-    return Array.from({ length: points }, (_, i) => {
-        const time = now - ((points - 1 - i) * intervalMs)
-        const trend = (i / points) * 0.05
-        const wave = Math.sin(i * 0.5) * 0.02
-        return { time, price: currentPrice * (0.95 + trend + wave) }
+    return NextResponse.json({
+        ticker: ticker.toUpperCase(),
+        name: ticker.toUpperCase(),
+        currentPrice: mockPrice,
+        change: mockPrice * 0.02,
+        changePercent: 2.0,
+        currency: 'USD',
+        exchangeRate: 1,
+        lastUpdated: new Date().toISOString(),
+        history,
+        isMock: true
     })
 }
