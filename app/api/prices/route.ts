@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import yahooFinance from 'yahoo-finance2'
 
+export const dynamic = 'force-dynamic'
+
 export async function POST(req: NextRequest) {
     try {
         const { tickers } = await req.json()
